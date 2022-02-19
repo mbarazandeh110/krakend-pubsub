@@ -60,14 +60,14 @@ func (f *BackendFactory) initPublisher(ctx context.Context, remote *config.Backe
 		return proxy.NoopProxy, errNoBackendHostDefined
 	}
 
-	dns := remote.Host[0]
+	// dns := remote.Host[0]
 	cfg := &publisherCfg{}
 	if err := getConfig(remote, publisherNamespace, cfg); err != nil {
-		f.logger.Debug(fmt.Sprintf("pubsub: publisher (%s): %s", dns, err.Error()))
+		f.logger.Debug(fmt.Sprintf("pubsub: publisher: %s", err.Error()))
 		return proxy.NoopProxy, err
 	}
 
-	t, err := pubsub.OpenTopic(ctx, dns+cfg.TopicURL)
+	t, err := pubsub.OpenTopic(ctx, cfg.TopicURL)
 	if err != nil {
 		f.logger.Error(fmt.Sprintf("pubsub: %s", err.Error()))
 		return proxy.NoopProxy, err
@@ -104,14 +104,14 @@ func (f *BackendFactory) initSubscriber(ctx context.Context, remote *config.Back
 		return proxy.NoopProxy, errNoBackendHostDefined
 	}
 
-	dns := remote.Host[0]
+	// dns := remote.Host[0]
 	cfg := &subscriberCfg{}
 	if err := getConfig(remote, subscriberNamespace, cfg); err != nil {
-		f.logger.Debug(fmt.Sprintf("pubsub: subscriber (%s): %s", dns, err.Error()))
+		f.logger.Debug(fmt.Sprintf("pubsub: subscriber: %s", err.Error()))
 		return proxy.NoopProxy, err
 	}
 
-	topicURL := dns + cfg.SubscriptionURL
+	topicURL := cfg.SubscriptionURL
 
 	sub, err := pubsub.OpenSubscription(ctx, topicURL)
 	if err != nil {
