@@ -8,13 +8,8 @@ import (
 	"io"
 	"io/ioutil"
 
+	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"gocloud.dev/pubsub"
-	_ "gocloud.dev/pubsub/awssnssqs"
-	_ "gocloud.dev/pubsub/azuresb"
-	_ "gocloud.dev/pubsub/gcppubsub"
-	_ "gocloud.dev/pubsub/kafkapubsub"
-	_ "gocloud.dev/pubsub/natspubsub"
-	_ "gocloud.dev/pubsub/rabbitpubsub"
 
 	"github.com/luraproject/lura/config"
 	"github.com/luraproject/lura/logging"
@@ -59,23 +54,21 @@ func (f *BackendFactory) initPublisher(ctx context.Context, remote *config.Backe
 	if len(remote.Host) < 1 {
 		return proxy.NoopProxy, errNoBackendHostDefined
 	}
-
-	// dns := remote.Host[0]
 	cfg := &publisherCfg{}
 	if err := getConfig(remote, publisherNamespace, cfg); err != nil {
 		f.logger.Debug(fmt.Sprintf("pubsub: publisher: %s", err.Error()))
 		return proxy.NoopProxy, err
 	}
 
-	t, err := pubsub.OpenTopic(ctx, cfg.TopicURL)
-	if err != nil {
-		f.logger.Error(fmt.Sprintf("pubsub: %s", err.Error()))
-		return proxy.NoopProxy, err
+	p, err0 := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": cfg.Addresses})
+	if err0 != nil {
+		f.logger.Error(fmt.Sprintf("pubsub: %s", err0.Error()))
+		return proxy.NoopProxy, err0
 	}
 
 	go func() {
 		<-ctx.Done()
-		t.Shutdown(context.Background())
+		p.Close()
 	}()
 
 	return func(ctx context.Context, r *proxy.Request) (*proxy.Response, error) {
@@ -83,63 +76,63 @@ func (f *BackendFactory) initPublisher(ctx context.Context, remote *config.Backe
 		if err != nil {
 			return nil, err
 		}
-		headers := map[string]string{}
-		for k, vs := range r.Headers {
-			headers[k] = vs[0]
-		}
-		msg := &pubsub.Message{
-			Metadata: headers,
-			Body:     body,
-		}
+		headers := []kafka.Header{}
 
-		if err := t.Send(ctx, msg); err != nil {
-			return nil, err
+		for k, vs := range r.Headers {
+			kh := kafka.Header{}
+			kh.Key = k
+			kh.Value = []byte(vs[0])
+			headers = append(headers, kh)
 		}
+		topic := cfg.Topic_url
+		p.Produce(&kafka.Message{
+			TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny},
+			Value:          []byte(body),
+			Headers:        headers,
+		}, nil)
+
 		return &proxy.Response{IsComplete: true}, nil
 	}, nil
 }
 
 func (f *BackendFactory) initSubscriber(ctx context.Context, remote *config.Backend) (proxy.Proxy, error) {
-	if len(remote.Host) < 1 {
-		return proxy.NoopProxy, errNoBackendHostDefined
-	}
 
-	// dns := remote.Host[0]
 	cfg := &subscriberCfg{}
 	if err := getConfig(remote, subscriberNamespace, cfg); err != nil {
 		f.logger.Debug(fmt.Sprintf("pubsub: subscriber: %s", err.Error()))
 		return proxy.NoopProxy, err
 	}
 
-	topicURL := cfg.SubscriptionURL
+	c, err := kafka.NewConsumer(&kafka.ConfigMap{
+		"bootstrap.servers": cfg.Addresses,
+		"group.id":          cfg.Group_id,
+	})
 
-	sub, err := pubsub.OpenSubscription(ctx, topicURL)
 	if err != nil {
-		f.logger.Error(fmt.Sprintf("pubsub: opening subscription for %s: %s", topicURL, err.Error()))
+		f.logger.Error(fmt.Sprintf("pubsub: opening subscription for %s: %s", cfg.Subscription_url, err.Error()))
 		return proxy.NoopProxy, err
 	}
+	c.SubscribeTopics([]string{cfg.Subscription_url}, nil)
 
 	go func() {
 		<-ctx.Done()
-		sub.Shutdown(context.Background())
+		c.Close()
 	}()
 
 	ef := proxy.NewEntityFormatter(remote)
 
 	return func(ctx context.Context, _ *proxy.Request) (*proxy.Response, error) {
-		msg, err := sub.Receive(ctx)
+		msg, err := c.ReadMessage(-1)
 		if err != nil {
 			return nil, err
 		}
 
 		var data map[string]interface{}
-		if err := remote.Decoder(bytes.NewBuffer(msg.Body), &data); err != nil && err != io.EOF {
+		if err := remote.Decoder(bytes.NewBuffer(msg.Value), &data); err != nil && err != io.EOF {
 			// TODO: figure out how to Nack if possible
 			// msg.Nack()
 			return nil, err
 		}
-
-		msg.Ack()
 
 		newResponse := proxy.Response{Data: data, IsComplete: true}
 		newResponse = ef.Format(newResponse)
@@ -148,26 +141,30 @@ func (f *BackendFactory) initSubscriber(ctx context.Context, remote *config.Back
 }
 
 type publisherCfg struct {
-	TopicURL string `json:"topic_url"`
+	Topic_url string
+	Addresses string
 }
 
 type subscriberCfg struct {
-	SubscriptionURL string `json:"subscription_url"`
+	Subscription_url string
+	Addresses        string
+	Group_id         string
 }
 
 func getConfig(remote *config.Backend, namespace string, v interface{}) error {
-	cfg, ok := remote.ExtraConfig[namespace]
+	data, ok := remote.ExtraConfig[namespace]
 	if !ok {
 		return &NamespaceNotFoundErr{
 			Namespace: namespace,
 		}
 	}
 
-	b, err := json.Marshal(&cfg)
+	raw, err := json.Marshal(data)
 	if err != nil {
 		return err
 	}
-	return json.Unmarshal(b, &v)
+
+	return json.Unmarshal(raw, &v)
 }
 
 type NamespaceNotFoundErr struct {

@@ -3,11 +3,7 @@ a pubsub backend for the KrakenD framework
 
 ## Backends
 
-- AWS SNS (Simple Notification Service) and SQS (Simple Queueing Service)
-- Azure Service Bus Topic and Subscription
-- GCP PubSub
-- NATS.io
-- RabbitMQ 
+- Kafka
 
 ## Configuration
 
@@ -15,11 +11,14 @@ Just add the extra config at your backend:
 
 ```
 "github.com/devopsfaith/krakend-pubsub/subscriber": {
-	"subscription_url": "gcppubsub://project/topic"
+	"subscription_url": "my_topic",
+	"group_id": "group_id",
+	"addresses": "host1:port1, host2:port"
 }
 ```
 ```
 "github.com/devopsfaith/krakend-pubsub/publisher": {
-	"topic_url": "gcppubsub://project/topic"
+	"topic_url": "my_topic",
+	"addresses": "host1:port1, host2:port"
 }
 ```
