@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"os"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"gocloud.dev/pubsub"
@@ -60,7 +61,13 @@ func (f *BackendFactory) initPublisher(ctx context.Context, remote *config.Backe
 		return proxy.NoopProxy, err
 	}
 
-	p, err0 := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": cfg.Addresses})
+	kafka_brokers := os.Getenv("KAFKA_BROKERS")
+	if kafka_brokers == "" {
+		f.logger.Debug(fmt.Sprintf("pubsub: publisher: %s", (&KafkaBrokerEmpyErr{}).Error()))
+		return proxy.NoopProxy, &KafkaBrokerEmpyErr{}
+	}
+
+	p, err0 := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": kafka_brokers})
 	if err0 != nil {
 		f.logger.Error(fmt.Sprintf("pubsub: %s", err0.Error()))
 		return proxy.NoopProxy, err0
@@ -103,8 +110,14 @@ func (f *BackendFactory) initSubscriber(ctx context.Context, remote *config.Back
 		return proxy.NoopProxy, err
 	}
 
+	kafka_brokers := os.Getenv("KAFKA_BROKERS")
+	if kafka_brokers == "" {
+		f.logger.Debug(fmt.Sprintf("pubsub: subscriber: %s", (&KafkaBrokerEmpyErr{}).Error()))
+		return proxy.NoopProxy, &KafkaBrokerEmpyErr{}
+	}
+
 	c, err := kafka.NewConsumer(&kafka.ConfigMap{
-		"bootstrap.servers": cfg.Addresses,
+		"bootstrap.servers": kafka_brokers,
 		"group.id":          cfg.Group_id,
 	})
 
@@ -130,7 +143,6 @@ func (f *BackendFactory) initSubscriber(ctx context.Context, remote *config.Back
 		var data map[string]interface{}
 		if err := remote.Decoder(bytes.NewBuffer(msg.Value), &data); err != nil && err != io.EOF {
 			// TODO: figure out how to Nack if possible
-			// msg.Nack()
 			return nil, err
 		}
 
@@ -142,13 +154,13 @@ func (f *BackendFactory) initSubscriber(ctx context.Context, remote *config.Back
 
 type publisherCfg struct {
 	Topic_url string
-	Addresses string
+	// Addresses string
 }
 
 type subscriberCfg struct {
 	Subscription_url string
-	Addresses        string
-	Group_id         string
+	// Addresses        string
+	Group_id string
 }
 
 func getConfig(remote *config.Backend, namespace string, v interface{}) error {
@@ -173,4 +185,11 @@ type NamespaceNotFoundErr struct {
 
 func (n *NamespaceNotFoundErr) Error() string {
 	return n.Namespace + " not found in the extra config"
+}
+
+type KafkaBrokerEmpyErr struct {
+}
+
+func (n *KafkaBrokerEmpyErr) Error() string {
+	return "The 'KAFKA_BROKERS' environment variable dose not exist!"
 }
