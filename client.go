@@ -12,9 +12,9 @@ import (
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"gocloud.dev/pubsub"
 
-	"github.com/luraproject/lura/config"
-	"github.com/luraproject/lura/logging"
-	"github.com/luraproject/lura/proxy"
+	"github.com/luraproject/lura/v2/config"
+	"github.com/luraproject/lura/v2/logging"
+	"github.com/luraproject/lura/v2/proxy"
 )
 
 var OpenCensusViews = pubsub.OpenCensusViews
@@ -52,26 +52,28 @@ func (f *BackendFactory) New(remote *config.Backend) proxy.Proxy {
 }
 
 func (f *BackendFactory) initPublisher(ctx context.Context, remote *config.Backend) (proxy.Proxy, error) {
-	if len(remote.Host) < 1 {
-		return proxy.NoopProxy, errNoBackendHostDefined
-	}
 	cfg := &publisherCfg{}
 	if err := getConfig(remote, publisherNamespace, cfg); err != nil {
-		f.logger.Debug(fmt.Sprintf("pubsub: publisher: %s", err.Error()))
+		if _, ok := err.(*NamespaceNotFoundErr); !ok {
+			f.logger.Error(fmt.Sprintf("[BACKEND][PubSub] Error initializing publisher: %s", err.Error()))
+		}
 		return proxy.NoopProxy, err
 	}
 
+	logPrefix := "[BACKEND: " + cfg.Topic_url + "][PubSub]"
 	kafka_brokers := os.Getenv("KAFKA_BROKERS")
 	if kafka_brokers == "" {
-		f.logger.Debug(fmt.Sprintf("pubsub: publisher: %s", (&KafkaBrokerEmpyErr{}).Error()))
+		f.logger.Error(fmt.Sprintf("[BACKEND][PubSub] Error initializing publisher: the KAFKA_BROKERS environment variable dose not exist"))
 		return proxy.NoopProxy, &KafkaBrokerEmpyErr{}
 	}
 
 	p, err0 := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": kafka_brokers})
 	if err0 != nil {
-		f.logger.Error(fmt.Sprintf("pubsub: %s", err0.Error()))
+		f.logger.Error(fmt.Sprintf("[BACKEND][PubSub] Error initializing publisher: %s", err0.Error()))
 		return proxy.NoopProxy, err0
 	}
+
+	f.logger.Debug(logPrefix, "Publisher initialized sucessfully")
 
 	go func() {
 		<-ctx.Done()
@@ -105,16 +107,21 @@ func (f *BackendFactory) initPublisher(ctx context.Context, remote *config.Backe
 func (f *BackendFactory) initSubscriber(ctx context.Context, remote *config.Backend) (proxy.Proxy, error) {
 
 	cfg := &subscriberCfg{}
+
 	if err := getConfig(remote, subscriberNamespace, cfg); err != nil {
-		f.logger.Debug(fmt.Sprintf("pubsub: subscriber: %s", err.Error()))
+		if _, ok := err.(*NamespaceNotFoundErr); !ok {
+			f.logger.Error(fmt.Sprintf("[BACKEND][PubSub] Error initializing subscriber: %s", err.Error()))
+		}
 		return proxy.NoopProxy, err
 	}
 
 	kafka_brokers := os.Getenv("KAFKA_BROKERS")
 	if kafka_brokers == "" {
-		f.logger.Debug(fmt.Sprintf("pubsub: subscriber: %s", (&KafkaBrokerEmpyErr{}).Error()))
+		f.logger.Error(fmt.Sprintf("[BACKEND][PubSub] Error initializing subscriber: the KAFKA_BROKERS environment variable dose not exist"))
 		return proxy.NoopProxy, &KafkaBrokerEmpyErr{}
 	}
+
+	logPrefix := "[BACKEND: " + cfg.Subscription_url + "][PubSub]"
 
 	c, err := kafka.NewConsumer(&kafka.ConfigMap{
 		"bootstrap.servers": kafka_brokers,
@@ -122,10 +129,11 @@ func (f *BackendFactory) initSubscriber(ctx context.Context, remote *config.Back
 	})
 
 	if err != nil {
-		f.logger.Error(fmt.Sprintf("pubsub: opening subscription for %s: %s", cfg.Subscription_url, err.Error()))
+		f.logger.Error(fmt.Sprintf(logPrefix, "Error while opening subscription: %s", err.Error()))
 		return proxy.NoopProxy, err
 	}
-	c.SubscribeTopics([]string{cfg.Subscription_url}, nil)
+
+	f.logger.Debug(logPrefix, "Subscriber initialized sucessfully")
 
 	go func() {
 		<-ctx.Done()
