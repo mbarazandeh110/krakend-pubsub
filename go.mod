@@ -1,4 +1,4 @@
-module github.com/devopsfaith/krakend-pubsub
+module github.com/devopsfaith/krakend-pubsub/v2
 
 go 1.17
 
@@ -8,3 +8,4 @@ require (
 	gocloud.dev v0.18.0
 	gocloud.dev/pubsub/kafkapubsub v0.18.0
 )
+
