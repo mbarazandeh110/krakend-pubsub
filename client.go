@@ -67,7 +67,7 @@ func (f *BackendFactory) initPublisher(ctx context.Context, remote *config.Backe
 		return proxy.NoopProxy, &KafkaBrokerEmpyErr{}
 	}
 
-	p, err0 := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": kafka_brokers})
+	p, err0 := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": kafka_brokers, "delivery.timeout.ms": 3000})
 	if err0 != nil {
 		f.logger.Error(fmt.Sprintf("[BACKEND][PubSub] Error initializing publisher: %s", err0.Error()))
 		return proxy.NoopProxy, err0
@@ -78,6 +78,17 @@ func (f *BackendFactory) initPublisher(ctx context.Context, remote *config.Backe
 	go func() {
 		<-ctx.Done()
 		p.Close()
+	}()
+
+	go func() {
+		for e := range p.Events() {
+			switch ev := e.(type) {
+			case *kafka.Message:
+				if ev.TopicPartition.Error != nil {
+					f.logger.Error(fmt.Sprintf("[BACKEND][PubSub] Failed to deliver message: %v\n", ev.TopicPartition.Error))
+				}
+			}
+		}
 	}()
 
 	return func(ctx context.Context, r *proxy.Request) (*proxy.Response, error) {
